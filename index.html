@@ -1,1 +1,977 @@
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KarmaText — Act to Speak</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+
+  <!-- QR Code -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+
+  <!-- PeerJS WebRTC -->
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'wa-green':  '#FFFFFF',
+            'wa-dk':     '#D4D4D4',
+            'wa-panel':  '#121212',
+            'wa-border': '#262626',
+            'wa-input':  '#080808',
+            'wa-muted':  '#888888',
+            'wa-text':   '#FFFFFF',
+            'wa-out':    '#262626',
+            'wa-in':     '#141414',
+            'wa-tick':   '#FFFFFF',
+          },
+          fontFamily: { sans: ['Inter', 'ui-sans-serif'] },
+          keyframes: {
+            'pop-in': {
+              '0%':   { transform: 'scale(0.82) translateY(10px)', opacity: '0' },
+              '70%':  { transform: 'scale(1.03)' },
+              '100%': { transform: 'scale(1) translateY(0)',        opacity: '1' },
+            },
+            'fade-up': {
+              from: { opacity: '0', transform: 'translateY(10px)' },
+              to:   { opacity: '1', transform: 'translateY(0)' },
+            },
+            'ring-pulse': {
+              '0%':   { transform: 'scale(1)',   opacity: '0.85' },
+              '100%': { transform: 'scale(1.55)', opacity: '0' },
+            },
+            'blink': {
+              '0%,100%': { opacity: '1' },
+              '50%':     { opacity: '0.25' },
+            },
+            'shutter-press': {
+              '0%,100%': { transform: 'scale(1)' },
+              '40%':     { transform: 'scale(0.91)' },
+            },
+            'rec-dot': {
+              '0%,100%': { opacity: '1' },
+              '50%':     { opacity: '0.2' },
+            },
+            'slide-down': {
+              from: { opacity: '0', transform: 'translateY(-10px) scale(0.96)' },
+              to:   { opacity: '1', transform: 'translateY(0)   scale(1)' },
+            },
+          },
+          animation: {
+            'pop-in':        'pop-in 0.28s ease-out',
+            'fade-up':       'fade-up 0.22s ease-out',
+            'ring-pulse':    'ring-pulse 1.3s ease-out infinite',
+            'blink':         'blink 1.4s ease-in-out infinite',
+            'shutter-press': 'shutter-press 0.15s ease',
+            'rec-dot':       'rec-dot 1s ease-in-out infinite',
+            'slide-down':    'slide-down 0.2s ease-out',
+          },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; font-family: 'Inter', sans-serif; background: #000000; color: #FFFFFF; }
+
+    /* Monochrome dot-grid wallpaper */
+    .wa-wallpaper {
+      background-color: #000000;
+      background-image: radial-gradient(#262626 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+
+    /* Bubble tails */
+    .bubble-out { border-radius: 8px 0 8px 8px; }
+    .bubble-out::after {
+      content: ''; position: absolute; top: 0; right: -7px;
+      border: 7px solid transparent; border-top-color: #262626; border-right: 0;
+    }
+    .bubble-in { border-radius: 0 8px 8px 8px; }
+    .bubble-in::after {
+      content: ''; position: absolute; top: 0; left: -7px;
+      border: 7px solid transparent; border-top-color: #141414; border-left: 0;
+    }
+
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-thumb { background: #333333; border-radius: 3px; }
+
+    /* SVG progress ring for HOLD TO ACT */
+    #shutter-ring {
+      transform: rotate(-90deg);
+      transform-origin: 50% 50%;
+      stroke-dasharray: 226;   /* 2π × 36 */
+      stroke-dashoffset: 226;
+      transition: stroke-dashoffset 0.05s linear;
+    }
+
+    /* Video inside bubble – loop silently */
+    .action-clip {
+      width: 100%;
+      border-radius: 6px;
+      display: block;
+      background: #000;
+      max-height: 220px;
+      object-fit: cover;
+    }
+
+    /* Viewfinder expands only while recording */
+    #viewfinder {
+      transition: height 0.25s ease, opacity 0.25s ease;
+      overflow: hidden;
+    }
+    #viewfinder.collapsed { height: 0; opacity: 0; pointer-events: none; }
+    #viewfinder.expanded  { height: 200px; opacity: 1; }
+
+    /* Pairing screen bg */
+    #pairing-screen { background: radial-gradient(ellipse at center, #141414 0%, #000000 100%); }
+
+    /* proximity ping */
+    .prox-ping { animation: ring-pulse 1.3s ease-out infinite; }
+
+    /* ── Connecting banner ── */
+    .conn-banner-hidden  { max-height: 0; overflow: hidden; padding-top: 0; padding-bottom: 0; opacity: 0; transition: max-height 0.25s ease, opacity 0.2s ease, padding 0.25s ease; }
+    .conn-banner-visible { max-height: 40px; opacity: 1; padding-top: 0.375rem; padding-bottom: 0.375rem; transition: max-height 0.25s ease, opacity 0.2s ease, padding 0.25s ease; }
+
+    /* ── Peer status dot colours ── */
+    .status-dot-disconnected { background: #555555; }
+    .status-dot-connecting   { background: #AAAAAA; }
+    .status-dot-connected    { background: #FFFFFF; }
+  </style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════
+     SCREEN 1 — PAIRING LOBBY
+══════════════════════════════════════════════ -->
+<div id="pairing-screen" class="fixed inset-0 z-50 flex flex-col items-center justify-center gap-5 p-6 overflow-y-auto">
+
+  <div class="text-center">
+    <div class="text-5xl mb-2">🎭</div>
+    <h1 class="text-3xl font-bold text-wa-green tracking-tight">KarmaText</h1>
+    <p class="text-wa-muted text-sm mt-1 text-center leading-relaxed">
+      Act to speak. No typing. No exceptions.<br/>
+      <span class="text-[11px]">Two people · 6 metres · Pure action clips</span>
+    </p>
+  </div>
+
+  <!-- Display name -->
+  <div class="w-full max-w-sm">
+    <label class="text-[11px] text-wa-muted font-bold uppercase tracking-wider mb-1 block">Your display name</label>
+    <input id="name-input" type="text" maxlength="20" placeholder="e.g. Alex"
+      class="w-full bg-wa-panel border border-wa-border text-wa-text text-sm rounded-xl px-4 py-3 outline-none focus:border-wa-green transition-colors placeholder-wa-muted" />
+  </div>
+
+  <!-- Tab switcher -->
+  <div class="w-full max-w-sm bg-wa-panel rounded-2xl p-1 flex gap-1">
+    <button id="tab-host" onclick="selectTab('host')"
+      class="flex-1 py-2 text-sm font-semibold rounded-xl bg-wa-green text-black transition-colors">Create Room</button>
+    <button id="tab-join" onclick="selectTab('join')"
+      class="flex-1 py-2 text-sm font-semibold rounded-xl text-wa-muted hover:text-wa-text transition-colors">Join Room</button>
+  </div>
+
+  <!-- HOST PANEL -->
+  <div id="host-panel" class="w-full max-w-sm flex flex-col items-center gap-4">
+    <div class="bg-[#121212] border border-wa-border rounded-2xl p-5 w-full flex flex-col items-center gap-4">
+      <div class="text-center">
+        <p class="text-[11px] text-wa-muted font-bold uppercase tracking-wider mb-2">Your Room Code</p>
+        <div id="room-code-display" class="font-black text-4xl tracking-[0.3em] text-wa-green font-mono select-all">----</div>
+        <p class="text-[11px] text-wa-muted mt-1">Share this with your peer</p>
+      </div>
+      <div id="qr-container" class="bg-white p-2 rounded-xl" style="width:120px;height:120px;"></div>
+      <button onclick="generateRoom()"
+        class="w-full bg-wa-green hover:bg-wa-dk text-black font-bold py-3 rounded-xl transition-colors text-sm active:scale-95">
+        Generate Room Code
+      </button>
+      <div id="host-waiting" class="hidden text-[11px] text-wa-muted text-center animate-blink">⏳ Waiting for peer…</div>
+    </div>
+  </div>
+
+  <!-- JOIN PANEL -->
+  <div id="join-panel" class="hidden w-full max-w-sm flex-col items-center gap-4">
+    <div class="bg-[#121212] border border-wa-border rounded-2xl p-5 w-full flex flex-col gap-4">
+      <div>
+        <label class="text-[11px] text-wa-muted font-bold uppercase tracking-wider mb-1 block">4-digit Room Code</label>
+        <input id="code-input" type="text" maxlength="4" placeholder="1234"
+          class="w-full bg-wa-input border border-wa-border text-wa-text text-2xl font-mono font-black tracking-[0.5em] rounded-xl px-4 py-3 outline-none focus:border-wa-green transition-colors placeholder-wa-muted text-center" />
+      </div>
+      <button onclick="joinRoom()"
+        class="w-full bg-wa-green hover:bg-wa-dk text-black font-bold py-3 rounded-xl transition-colors text-sm active:scale-95">
+        Join Room
+      </button>
+      <div id="join-status" class="text-xs text-center text-wa-muted hidden"></div>
+    </div>
+  </div>
+
+  <!-- Connecting spinner -->
+  <div id="connecting-overlay" class="hidden flex-col items-center gap-3">
+    <svg class="animate-spin text-wa-green" width="30" height="30" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+      <path stroke-linecap="round" d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48 2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48 2.83-2.83"/>
+    </svg>
+    <span class="text-wa-green font-semibold text-sm animate-blink">Establishing proximity link…</span>
+  </div>
+
+</div><!-- /pairing-screen -->
+
+
+<!-- ══════════════════════════════════════════════
+     SCREEN 2 — CHAT
+══════════════════════════════════════════════ -->
+<div id="chat-screen" class="hidden fixed inset-0 z-40 flex flex-col">
+
+  <!-- ── CONNECTING BANNER (slides in when conn not ready) ── -->
+  <div id="conn-banner" class="conn-banner-hidden flex items-center justify-center gap-2 bg-red-600 text-white text-xs font-bold py-1.5 px-4 flex-shrink-0">
+    <svg class="animate-spin" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24">
+      <path stroke-linecap="round" d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48 2.83 2.83M2 12h4m12 0h4"/>
+    </svg>
+    <span id="conn-banner-text">Connecting to peer… please wait</span>
+  </div>
+
+  <!-- ── HEADER ── -->
+  <div class="flex items-center gap-3 px-4 py-2 bg-[#121212] border-b border-[#262626] flex-shrink-0 min-h-[59px]">
+
+    <!-- Peer avatar -->
+    <div id="peer-avatar"
+      class="w-10 h-10 rounded-full bg-white flex items-center justify-center text-black font-bold text-base flex-shrink-0 select-none">P
+    </div>
+
+    <!-- Name + proximity -->
+    <div class="flex-1 min-w-0">
+      <div id="peer-name-hdr" class="text-wa-text font-semibold text-[15px] truncate">Peer</div>
+      <div class="flex items-center gap-1.5 mt-0.5">
+        <span class="relative flex h-2 w-2 flex-shrink-0">
+          <span class="prox-ping animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+          <span class="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
+        </span>
+        <span id="prox-text" class="text-[11px] text-[#AAAAAA] font-medium truncate">⚪ Proximity Locked: Peer Detected (~5-6m). Keyboard disabled.</span>
+      </div>
+      <!-- Peer connection status diagnostic -->
+      <div class="flex items-center gap-1.5 mt-0.5">
+        <span id="peer-status-dot" class="inline-block w-2 h-2 rounded-full bg-yellow-400 flex-shrink-0"></span>
+        <span id="peer-status-text" class="text-[10px] text-wa-muted font-mono truncate">Peer Status: Connecting</span>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Disconnect overlay -->
+  <div id="disconnected-overlay" class="hidden absolute inset-0 z-[200] bg-black/70 backdrop-blur-sm flex flex-col items-center justify-center gap-4">
+    <div class="text-5xl">📡</div>
+    <div class="text-center">
+      <h2 class="text-wa-text font-bold text-xl mb-1">Peer Out of Range</h2>
+      <p class="text-wa-muted text-sm max-w-xs">Peer disconnected or moved beyond 6 metres.<br/>Walk closer to re-establish proximity.</p>
+    </div>
+    <div class="animate-blink text-red-400 text-sm font-semibold">⚠️ Connection lost &gt;6m</div>
+  </div>
+
+  <!-- ── MESSAGES ── -->
+  <div id="messages" class="flex-1 overflow-y-auto wa-wallpaper px-4 py-4 flex flex-col gap-2">
+    <div class="flex justify-center my-2">
+      <span class="bg-[#121212] text-[#888888] border border-[#262626] text-[11px] px-4 py-1.5 rounded-xl text-center max-w-xs leading-relaxed">
+        📡 Proximity link established.<br/>Hold the button below to record and send a 2-second action clip.
+      </span>
+    </div>
+  </div>
+
+  <!-- ── ACTION BAR ── -->
+  <div class="flex-shrink-0 bg-[#0C0C0C] border-t border-[#262626]">
+
+    <!-- Viewfinder: only expands while recording -->
+    <div id="viewfinder" class="collapsed relative bg-black">
+      <video id="cam-video" autoplay muted playsinline
+        class="w-full h-full object-cover absolute inset-0"
+        style="transform: scaleX(-1);"></video>
+      <!-- REC badge -->
+      <div id="rec-badge" class="hidden absolute top-2 left-2 flex items-center gap-1.5 bg-black/60 rounded-full px-2 py-1">
+        <span class="w-2 h-2 rounded-full bg-red-500 animate-rec-dot"></span>
+        <span class="text-white text-[10px] font-bold tracking-wider">REC</span>
+      </div>
+      <!-- No-camera fallback -->
+      <div id="no-cam-msg" class="hidden absolute inset-0 bg-[#0A0A0A] flex flex-col items-center justify-center gap-2 text-center px-4">
+        <span class="text-3xl">📷</span>
+        <span id="no-cam-reason" class="text-[#888888] text-xs leading-relaxed">Camera unavailable.</span>
+        <button id="retry-cam-btn" onclick="retryCamera()"
+          class="mt-1 flex items-center gap-1.5 bg-white hover:bg-[#CCCCCC] text-black text-xs font-bold px-4 py-2 rounded-xl transition-all active:scale-95">
+          🔄 Retry Camera
+        </button>
+      </div>
+    </div>
+
+    <!-- Shutter row -->
+    <div class="flex items-center justify-center gap-5 px-4 py-3">
+
+      <!-- Left decoration: emoji hint -->
+      <div class="flex flex-col items-center gap-0.5 w-16 text-center">
+        <span id="action-hint-icon" class="text-2xl">🎬</span>
+        <span id="action-hint-label" class="text-[10px] text-wa-muted font-semibold leading-tight">Hold to<br/>record</span>
+      </div>
+
+      <!-- HOLD TO ACT shutter button -->
+      <div class="relative flex items-center justify-center select-none">
+        <!-- Pulsing ring (idle) -->
+        <div id="idle-ring" class="absolute w-20 h-20 rounded-full border-2 border-white/20 animate-ring-pulse pointer-events-none"></div>
+
+        <!-- SVG progress ring (recording) -->
+        <svg class="absolute w-20 h-20 pointer-events-none" viewBox="0 0 80 80">
+          <circle cx="40" cy="40" r="36" fill="none" stroke="#2E2E2E" stroke-width="4"/>
+          <circle id="shutter-ring" cx="40" cy="40" r="36" fill="none"
+            stroke="#FFFFFF" stroke-width="4" stroke-linecap="round"/>
+        </svg>
+
+        <!-- The button itself -->
+        <button
+          id="shutter-btn"
+          class="relative w-16 h-16 rounded-full bg-white flex flex-col items-center justify-center gap-0.5 shadow-lg shadow-white/10 transition-transform active:scale-90 cursor-pointer z-10 border-2 border-white"
+          onmousedown="startRecord()" ontouchstart="startRecord()"
+          onmouseup="stopRecord()"   ontouchend="stopRecord()"
+          onmouseleave="stopRecord()">
+          <svg id="shutter-icon" width="24" height="24" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="8" fill="#0A0A0A"/>
+            <circle cx="12" cy="12" r="10" fill="none" stroke="#0A0A0A" stroke-width="2"/>
+          </svg>
+          <span id="shutter-label" class="text-black text-[8px] font-extrabold leading-none tracking-wide">HOLD TO ACT</span>
+        </button>
+      </div>
+
+      <!-- Right decoration: timer / status -->
+      <div class="flex flex-col items-center gap-0.5 w-16 text-center">
+        <span id="rec-timer" class="text-xl font-black text-white tabular-nums">2.0</span>
+        <span id="rec-status" class="text-[10px] text-[#888888] font-semibold leading-tight">seconds<br/>max</span>
+      </div>
+
+    </div><!-- /shutter row -->
+  </div><!-- /action bar -->
+
+</div><!-- /chat-screen -->
+
+
+<!-- ══════════════════════════════════════════════
+     JAVASCRIPT ENGINE
+══════════════════════════════════════════════ -->
+<script>
+/* ─────────────────────────────────────────────
+   GLOBAL STATE
+───────────────────────────────────────────── */
+let myName   = '';
+let peerName = '';
+let myPeer   = null;
+let conn     = null;
+let camStream      = null;
+
+/* Shared ICE config — STUN + TURN relays for mobile data / symmetric NAT */
+const ICE_CONFIG = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    // Free Open Relay TURN servers (no sign-up needed)
+    {
+      urls: [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:443',
+        'turn:openrelay.metered.ca:443?transport=tcp',
+      ],
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+  ],
+  iceTransportPolicy: 'all',
+};
+let mediaRecorder  = null;
+let recordedChunks = [];
+let recordTimer    = null;
+let ringAnimFrame  = null;
+let recordStart    = null;
+let isRecording    = false;
+const RECORD_MS    = 2000;
+const RING_CIRCUM  = 2 * Math.PI * 36; // ≈ 226.2
+
+let audioCtx = null;
+
+/* ─────────────────────────────────────────────
+   PAIRING — TAB SWITCH
+───────────────────────────────────────────── */
+function selectTab(t) {
+  const h = t === 'host';
+  document.getElementById('tab-host').className =
+    `flex-1 py-2 text-sm font-semibold rounded-xl transition-colors ${h  ? 'bg-wa-green text-black' : 'text-wa-muted hover:text-wa-text'}`;
+  document.getElementById('tab-join').className =
+    `flex-1 py-2 text-sm font-semibold rounded-xl transition-colors ${!h ? 'bg-wa-green text-black' : 'text-wa-muted hover:text-wa-text'}`;
+  document.getElementById('host-panel').classList.toggle('hidden', !h);
+  document.getElementById('host-panel').classList.toggle('flex',    h);
+  document.getElementById('join-panel').classList.toggle('hidden',  h);
+  document.getElementById('join-panel').classList.toggle('flex',   !h);
+}
+
+/* ─────────────────────────────────────────────
+   PEERJS — HOST
+───────────────────────────────────────────── */
+function generateRoom() {
+  const name = document.getElementById('name-input').value.trim();
+  if (!name) { alert('Enter your display name first.'); return; }
+  myName = name;
+
+  const code = String(Math.floor(1000 + Math.random() * 9000));
+  const pid  = 'karmatext-' + code;
+  document.getElementById('room-code-display').textContent = code;
+
+  const qrDiv = document.getElementById('qr-container');
+  qrDiv.innerHTML = '';
+  try { new QRCode(qrDiv, { text: code, width: 104, height: 104, colorDark: '#000', colorLight: '#fff' }); }
+  catch(e) { qrDiv.innerHTML = '<div class="text-xs text-gray-400 text-center p-2">QR N/A</div>'; }
+
+  document.getElementById('host-waiting').classList.remove('hidden');
+
+  myPeer = new Peer(pid, { debug: 0, config: ICE_CONFIG });
+  myPeer.on('open',       ()  => console.log('[Peer] host ready:', pid));
+  myPeer.on('connection', c   => { conn = c; setPeerStatus('connecting'); setupConn(); });
+  myPeer.on('error',      err => { console.error('[Peer] host error:', err); setPeerStatus('disconnected'); });
+}
+
+/* ─────────────────────────────────────────────
+   PEERJS — JOIN
+───────────────────────────────────────────── */
+function joinRoom() {
+  const name = document.getElementById('name-input').value.trim();
+  const code = document.getElementById('code-input').value.trim();
+  if (!name) { showJoinStatus('Enter your display name above.', 'text-yellow-400'); return; }
+  if (code.length !== 4 || isNaN(code)) { showJoinStatus('Enter a valid 4-digit code.', 'text-red-400'); return; }
+  myName = name;
+
+  showJoinStatus('Connecting…', 'text-wa-green animate-blink');
+  document.getElementById('connecting-overlay').classList.replace('hidden','flex');
+
+  myPeer = new Peer(undefined, { debug: 0, config: ICE_CONFIG });
+  myPeer.on('open', () => {
+    conn = myPeer.connect('karmatext-' + code, { reliable: true });
+    setPeerStatus('connecting');
+    setupConn();
+  });
+  myPeer.on('error', err => {
+    showJoinStatus('❌ Room "' + code + '" not found. Check the code.', 'text-red-400');
+    document.getElementById('connecting-overlay').classList.replace('flex','hidden');
+    setPeerStatus('disconnected');
+    console.error('[Peer] join error:', err);
+  });
+}
+
+function showJoinStatus(msg, cls) {
+  const el = document.getElementById('join-status');
+  el.innerHTML  = msg;
+  el.className  = `text-xs text-center ${cls}`;
+  el.classList.remove('hidden');
+}
+
+/* ─────────────────────────────────────────────
+   PEER STATUS HELPERS
+───────────────────────────────────────────── */
+const STATUS_CFG = {
+  disconnected: { dot: 'status-dot-disconnected', label: 'Peer Status: Disconnected' },
+  connecting:   { dot: 'status-dot-connecting',   label: 'Peer Status: Connecting…'  },
+  connected:    { dot: 'status-dot-connected',     label: 'Peer Status: Connected ✓'  },
+};
+
+function setPeerStatus(state) {
+  const dot  = document.getElementById('peer-status-dot');
+  const text = document.getElementById('peer-status-text');
+  if (!dot || !text) return;                       // called before chat screen exists
+
+  const cfg = STATUS_CFG[state] || STATUS_CFG.disconnected;
+  dot.className  = `inline-block w-2 h-2 rounded-full flex-shrink-0 ${cfg.dot}`;
+  text.textContent = cfg.label;
+  console.log('[PeerStatus]', cfg.label);
+}
+
+let bannerTimer = null;
+function showConnBanner(msg) {
+  const banner = document.getElementById('conn-banner');
+  const txt    = document.getElementById('conn-banner-text');
+  if (!banner) return;
+  if (txt) txt.textContent = msg;
+  banner.classList.replace('conn-banner-hidden', 'conn-banner-visible');
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(() => banner.classList.replace('conn-banner-visible', 'conn-banner-hidden'), 4000);
+}
+
+function hideConnBanner() {
+  clearTimeout(bannerTimer);
+  const banner = document.getElementById('conn-banner');
+  if (banner) banner.classList.replace('conn-banner-visible', 'conn-banner-hidden');
+}
+
+/* ─────────────────────────────────────────────
+   PEERJS — CONNECTION SETUP (BOTH SIDES)
+───────────────────────────────────────────── */
+function setupConn() {
+  conn.on('open', () => {
+    console.log('[Peer] connection open');
+    setPeerStatus('connected');
+    conn.send(JSON.stringify({ type: 'hello', name: myName }));
+  });
+
+  // Unified data handler — handles ALL message types
+  conn.on('data', raw => {
+    try {
+      if (typeof raw === 'string') {
+        const msg = JSON.parse(raw);
+        if (msg.type === 'hello') {
+          peerName = msg.name;
+          enterChat();
+        } else if (msg.type === 'clip-start') {
+          incomingMeta   = { mime: msg.mime, total: msg.total };
+          incomingChunks = {}; // keyed by index for safe ordering
+          console.log('[Recv] clip-start, total chunks:', msg.total);
+        } else if (msg.type === 'clip-chunk') {
+          incomingChunks[msg.idx] = msg.data;
+        } else if (msg.type === 'clip-end') {
+          console.log('[Recv] clip-end, assembling...');
+          assembleAndRenderClip();
+        }
+      }
+      // No binary handler needed — all data is JSON strings now
+    } catch(e) { console.error('[data parse]', e); }
+  });
+
+  conn.on('close', onPeerDisconnect);
+  conn.on('error', e => { console.error('[conn]', e); onPeerDisconnect(); });
+}
+
+/* ─────────────────────────────────────────────
+   ENTER CHAT
+───────────────────────────────────────────── */
+function enterChat() {
+  document.getElementById('pairing-screen').classList.add('hidden');
+  document.getElementById('chat-screen').classList.replace('hidden', 'flex');
+
+  const init = (peerName || 'P')[0].toUpperCase();
+  document.getElementById('peer-avatar').textContent    = init;
+  document.getElementById('peer-name-hdr').textContent  = peerName + ' · Proximity Active (6m)';
+
+  setPeerStatus('connected');
+  hideConnBanner();
+  initCamera();
+}
+
+/* ─────────────────────────────────────────────
+   DISCONNECT
+───────────────────────────────────────────── */
+function onPeerDisconnect() {
+  document.getElementById('disconnected-overlay').classList.replace('hidden', 'flex');
+  document.getElementById('prox-text').textContent  = '🔴 Peer out of range (>6m). Walk closer.';
+  document.getElementById('prox-text').className    = 'text-[11px] text-red-400 font-medium truncate';
+  setPeerStatus('disconnected');
+  showConnBanner('Peer disconnected — connection lost >6m');
+}
+
+/* ─────────────────────────────────────────────
+   CAMERA INIT
+───────────────────────────────────────────── */
+async function initCamera() {
+  const vid      = document.getElementById('cam-video');
+  const noCamDiv = document.getElementById('no-cam-msg');
+  const retryBtn = document.getElementById('retry-cam-btn');
+  const reasonEl = document.getElementById('no-cam-reason');
+
+  vid.classList.remove('hidden');
+  noCamDiv.classList.add('hidden');
+
+  try {
+    if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; }
+
+    camStream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 320 }, height: { ideal: 240 }, facingMode: 'user' },
+      audio: false,
+    });
+    vid.srcObject = camStream;
+    await vid.play();
+
+  } catch(e) {
+    console.error('[Camera]', e.name, ':', e.message);
+    let reason = 'Camera unavailable.';
+    if      (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError')
+      { reason = 'Camera permission blocked. Allow it in browser settings, then retry.'; retryBtn.classList.add('hidden'); }
+    else if (e.name === 'NotReadableError' || e.name === 'TrackStartError')
+      { reason = 'Camera in use by another app. Close it and retry.'; }
+    else if (e.name === 'NotFoundError')
+      { reason = 'No camera found. Connect a webcam, then retry.'; }
+    else if (e.name === 'OverconstrainedError') {
+      try {
+        camStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        vid.srcObject = camStream; await vid.play(); return;
+      } catch(e2) { reason = 'Camera unavailable even at default settings.'; }
+    }
+    reasonEl.textContent = reason;
+    vid.classList.add('hidden');
+    noCamDiv.classList.remove('hidden');
+    noCamDiv.classList.add('flex');
+  }
+}
+
+function retryCamera() {
+  const btn = document.getElementById('retry-cam-btn');
+  btn.classList.remove('hidden');
+  btn.textContent = '⏳ Retrying…';
+  btn.disabled    = true;
+  initCamera().finally(() => { btn.textContent = '🔄 Retry Camera'; btn.disabled = false; });
+}
+
+/* ─────────────────────────────────────────────
+   RECORDING ENGINE
+───────────────────────────────────────────── */
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+
+function playSent() {
+  try {
+    const ctx = getAudioCtx();
+    [0, 0.13].forEach(d => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.type = 'sine';
+      o.frequency.setValueAtTime(1500, ctx.currentTime + d);
+      o.frequency.exponentialRampToValueAtTime(950, ctx.currentTime + d + 0.09);
+      g.gain.setValueAtTime(0.22, ctx.currentTime + d);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + d + 0.13);
+      o.start(ctx.currentTime + d); o.stop(ctx.currentTime + d + 0.16);
+    });
+  } catch(e) {}
+}
+
+function playChime() {
+  try {
+    const ctx = getAudioCtx();
+    [0, 0.1, 0.2].forEach((d, i) => {
+      const freqs = [1100, 1300, 1550];
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.type = 'sine';
+      o.frequency.setValueAtTime(freqs[i], ctx.currentTime + d);
+      g.gain.setValueAtTime(0.18, ctx.currentTime + d);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + d + 0.25);
+      o.start(ctx.currentTime + d); o.stop(ctx.currentTime + d + 0.28);
+    });
+  } catch(e) {}
+}
+
+function startRecord() {
+  if (isRecording) return;
+  if (!camStream || !camStream.active) {
+    // Camera not ready — still show viewfinder attempt
+    expandViewfinder();
+    return;
+  }
+
+  isRecording    = true;
+  recordedChunks = [];
+  recordStart    = Date.now();
+
+  expandViewfinder();
+  setShutterRecording(true);
+
+  // Pick best mime type
+  const mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4']
+    .find(m => MediaRecorder.isTypeSupported(m)) || '';
+
+  try {
+    mediaRecorder = new MediaRecorder(camStream, mime ? { mimeType: mime } : {});
+  } catch(e) {
+    mediaRecorder = new MediaRecorder(camStream);
+  }
+
+  mediaRecorder.ondataavailable = e => { if (e.data && e.data.size > 0) recordedChunks.push(e.data); };
+  mediaRecorder.onstop = finaliseClip;
+  mediaRecorder.start(100); // collect in 100ms chunks
+
+  // Animate ring
+  animateRing();
+
+  // Auto-stop after RECORD_MS
+  recordTimer = setTimeout(stopRecord, RECORD_MS);
+}
+
+function stopRecord() {
+  if (!isRecording) return;
+  isRecording = false;
+  clearTimeout(recordTimer);
+  cancelAnimationFrame(ringAnimFrame);
+
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  } else {
+    collapseViewfinder();
+    setShutterRecording(false);
+    resetRing();
+  }
+}
+
+function finaliseClip() {
+  const mime = mediaRecorder?.mimeType || 'video/webm';
+  const blob = new Blob(recordedChunks, { type: mime });
+  recordedChunks = [];
+
+  collapseViewfinder();
+  setShutterRecording(false);
+  resetRing();
+
+  if (blob.size < 1000) {
+    console.warn('[Record] clip too small, discarding');
+    return;
+  }
+
+  console.log(`[Record] clip ready: ${blob.size}B  mime: ${mime}`);
+  dispatchClip(blob);
+}
+
+
+
+/* ─────────────────────────────────────────────
+   RING ANIMATION
+───────────────────────────────────────────── */
+function animateRing() {
+  const ring  = document.getElementById('shutter-ring');
+  const timer = document.getElementById('rec-timer');
+
+  function frame() {
+    if (!isRecording) return;
+    const elapsed  = Date.now() - recordStart;
+    const progress = Math.min(elapsed / RECORD_MS, 1);
+    ring.style.strokeDashoffset = RING_CIRCUM * (1 - progress);
+    timer.textContent = ((RECORD_MS - elapsed) / 1000).toFixed(1);
+    ringAnimFrame = requestAnimationFrame(frame);
+  }
+  ringAnimFrame = requestAnimationFrame(frame);
+}
+
+function resetRing() {
+  document.getElementById('shutter-ring').style.strokeDashoffset = RING_CIRCUM;
+  document.getElementById('rec-timer').textContent = '2.0';
+}
+
+/* ─────────────────────────────────────────────
+   VIEWFINDER EXPAND / COLLAPSE
+───────────────────────────────────────────── */
+function expandViewfinder() {
+  const vf = document.getElementById('viewfinder');
+  vf.classList.replace('collapsed', 'expanded');
+  document.getElementById('rec-badge').classList.remove('hidden');
+  document.getElementById('rec-badge').classList.add('flex');
+}
+
+function collapseViewfinder() {
+  const vf = document.getElementById('viewfinder');
+  vf.classList.replace('expanded', 'collapsed');
+  document.getElementById('rec-badge').classList.add('hidden');
+  document.getElementById('rec-badge').classList.remove('flex');
+}
+
+/* ─────────────────────────────────────────────
+   SHUTTER BUTTON STATE
+───────────────────────────────────────────── */
+function setShutterRecording(on) {
+  const btn   = document.getElementById('shutter-btn');
+  const label = document.getElementById('shutter-label');
+  const idle  = document.getElementById('idle-ring');
+  const status = document.getElementById('rec-status');
+
+  btn.style.background = on ? '#333333' : '#FFFFFF';
+  btn.style.borderColor = on ? '#555555' : '#FFFFFF';
+  btn.style.color = on ? '#ffffff' : '#0A0A0A';
+  label.textContent    = on ? 'RECORDING' : 'HOLD TO ACT';
+  label.style.color    = on ? '#ffffff' : '#0A0A0A';
+  idle.style.opacity   = on ? '0' : '1';
+  status.textContent   = on ? 'recording…\nrelease to send' : 'seconds\nmax';
+}
+
+/* ─────────────────────────────────────────────
+   SEND CLIP OVER WEBRTC
+   Strategy: convert blob → base64 string, send
+   as pure JSON chunks (8 KB each). This avoids
+   all binary DataChannel race conditions and
+   works reliably on every browser.
+───────────────────────────────────────────── */
+const B64_CHUNK = 8000; // ~8 KB of base64 per message
+
+function blobToDataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function dispatchClip(blob) {
+  // Show outgoing bubble immediately (local preview)
+  addActionBubble('out', URL.createObjectURL(blob));
+  playSent();
+
+  if (!conn || !conn.open) {
+    showConnBanner('Not connected — check your connection.');
+    console.warn('[dispatchClip] conn not open');
+    return;
+  }
+
+  try {
+    // Convert blob → base64 data URL, strip the prefix
+    const dataURL = await blobToDataURL(blob);
+    const base64  = dataURL.split(',')[1];
+    const total   = Math.ceil(base64.length / B64_CHUNK);
+
+    console.log(`[Send] ${blob.size}B → base64 ${base64.length} chars → ${total} chunks`);
+
+    // 1. Signal start
+    conn.send(JSON.stringify({ type: 'clip-start', mime: blob.type, total }));
+
+    // 2. Send indexed base64 chunks
+    for (let i = 0; i < total; i++) {
+      const data = base64.slice(i * B64_CHUNK, (i + 1) * B64_CHUNK);
+      conn.send(JSON.stringify({ type: 'clip-chunk', idx: i, data }));
+      await sleep(15); // small yield so channel stays healthy
+    }
+
+    // 3. Signal end
+    conn.send(JSON.stringify({ type: 'clip-end' }));
+    console.log('[Send] all done');
+  } catch(e) {
+    console.error('[dispatchClip] error:', e);
+    showConnBanner('Failed to send clip — connection may be unstable.');
+  }
+}
+
+/* ─────────────────────────────────────────────
+   INCOMING CLIP REASSEMBLY
+───────────────────────────────────────────── */
+let incomingMeta   = null;
+let incomingChunks = {};
+
+function assembleAndRenderClip() {
+  const total = incomingMeta?.total || 0;
+  const mime  = incomingMeta?.mime  || 'video/webm';
+
+  // Reassemble base64 string in index order
+  let base64 = '';
+  for (let i = 0; i < total; i++) {
+    if (incomingChunks[i] === undefined) {
+      console.warn('[assemble] missing chunk', i);
+    }
+    base64 += incomingChunks[i] || '';
+  }
+
+  incomingChunks = {};
+  incomingMeta   = null;
+
+  if (!base64) { console.warn('[assemble] empty base64'); return; }
+
+  // Decode base64 → Uint8Array → Blob → object URL
+  try {
+    const binary = atob(base64);
+    const bytes  = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const blob = new Blob([bytes], { type: mime });
+    console.log('[assemble] clip ready:', blob.size, 'B  mime:', mime);
+    const url = URL.createObjectURL(blob);
+    addActionBubble('in', url);
+    playChime();
+  } catch(e) {
+    console.error('[assemble] decode error:', e);
+  }
+}
+
+/* ─────────────────────────────────────────────
+   ACTION BUBBLE RENDERER
+───────────────────────────────────────────── */
+const TICK_SVG = `<svg width="16" height="11" fill="#FFFFFF" viewBox="0 0 16 11">
+  <path d="M11.071.653l-6.383 7.738-2.31-2.311-.93.93 3.241 3.241 7.313-8.668-.931-.93z"/>
+  <path d="M13.621.654l-6.384 7.738-.803-.803-.93.93 1.733 1.732 7.313-8.668-.929-.929z"/>
+</svg>`;
+
+function addActionBubble(dir, videoUrl) {
+  const msgs  = document.getElementById('messages');
+  const isOut = dir === 'out';
+  const bg    = isOut ? 'bg-[#262626] border border-white/20' : 'bg-[#141414] border border-[#262626]';
+  const tail  = isOut ? 'bubble-out' : 'bubble-in';
+  const time  = getNow();
+
+  const row = document.createElement('div');
+  row.className = `flex ${isOut ? 'justify-end' : 'justify-start'} animate-pop-in`;
+  row.innerHTML = `
+    <div class="relative ${bg} ${tail} p-1.5 pb-1 shadow-md" style="max-width:260px; min-width:160px;">
+      <video class="action-clip rounded"
+        src="${videoUrl}" autoplay loop muted playsinline
+        style="max-height:200px; width:100%; object-fit:cover; border-radius:6px; background:#000; border: 1px solid rgba(255,255,255,0.15);">
+      </video>
+      <div class="mt-1 px-1 flex items-center gap-1">
+        <span style="color:#FFFFFF;" class="text-[10px] font-black tracking-wide">⚡ Pure Action Verified (0% Words)</span>
+      </div>
+      <div class="flex items-center justify-end gap-1 mt-0.5 px-1 pb-0.5">
+        <span class="text-[11px] ${isOut ? 'text-white/60' : 'text-white/40'}">${time}</span>
+        ${isOut ? TICK_SVG : ''}
+      </div>
+    </div>`;
+
+  msgs.appendChild(row);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+
+
+/* ─────────────────────────────────────────────
+   UTILS
+───────────────────────────────────────────── */
+function getNow() {
+  const d = new Date();
+  let h = d.getHours(), m = d.getMinutes().toString().padStart(2,'0');
+  const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12;
+  return `${h}:${m} ${ap}`;
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+/* ─────────────────────────────────────────────
+   KEYBOARD BLOCK (still active — key presses
+   outside the pairing screen do nothing useful)
+───────────────────────────────────────────── */
+document.addEventListener('keydown', e => {
+  if (document.getElementById('chat-screen').classList.contains('hidden')) return;
+  if (e.key === 'F12' || (e.ctrlKey && 'rR'.includes(e.key))) return;
+  // Space = hold-to-record shortcut
+  if (e.key === ' ' && !e.repeat) { e.preventDefault(); startRecord(); return; }
+  e.preventDefault();
+});
+
+document.addEventListener('keyup', e => {
+  if (e.key === ' ') stopRecord();
+});
+
+/* ─────────────────────────────────────────────
+   No enterChat patching needed — setupConn's
+   unified data handler handles all message
+   types from the moment the connection opens.
+───────────────────────────────────────────── */
+
+/* ─────────────────────────────────────────────
+   INIT
+───────────────────────────────────────────── */
+window.addEventListener('DOMContentLoaded', () => {
+  selectTab('host');
+  const saved = localStorage.getItem('kt_name');
+  if (saved) document.getElementById('name-input').value = saved;
+  document.getElementById('name-input').addEventListener('blur', () => {
+    localStorage.setItem('kt_name', document.getElementById('name-input').value.trim());
+  });
+});
+</script>
+</body>
+</html>
