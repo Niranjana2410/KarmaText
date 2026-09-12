@@ -51,13 +51,13 @@ For Hardware:
 For Software:
 # Installation
 No setup or installation required. Open the live deployment directly on any two devices with webcams:
-👉 [niranjana2410.github.io/karmatalk](https://niranjana2410.github.io/karmatalk2/)
+👉 [niranjana2410.github.io/KarmaText] https://github.com/Niranjana2410/KarmaText.git
 
 # Run
 1. **Clone the repository:**
    ```bash
-   git clone [https://github.com/Niranjana2410/karmatalk2.git](https://github.com/Niranjana2410/karmatalk2.git)
-   cd karmatalk2
+   git clone [https://github.com/Niranjana2410/KarmaText.git](https://github.com/Niranjana2410/KarmaText.git)
+   cd KarmaText
 
 ### Project Documentation
 For Software:
